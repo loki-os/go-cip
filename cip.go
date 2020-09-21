@@ -58,7 +58,7 @@ func (c *Channel) SetTimeout(timeTicks typedef.Usint, timeoutTicks typedef.Usint
 	c.timeoutTicks = timeoutTicks
 }
 
-func (c *Channel) CommonPackage(mr *eip.MessageRouterRequest) *eip.CommonPacketFormat {
+func (c *Channel) CommonPackage(mr *eip.MessageRouterRequest) (*eip.SendDataSpecificData, error) {
 	if c.ucmm {
 		ucs := UnConnectedSend{
 			TimeTick:       c.timeTicks,
@@ -85,10 +85,12 @@ func (c *Channel) CommonPackage(mr *eip.MessageRouterRequest) *eip.CommonPacketF
 			},
 		})
 
-		return cpf
-	}
+		return c.Device.eipDevice.SendRRData(cpf, 10)
+	} else {
+		//todo
 
-	return nil
+		return nil, nil
+	}
 }
 
 func (c *Channel) GetAttributeAll() error {
@@ -100,8 +102,7 @@ func (c *Channel) GetAttributeAll() error {
 	mr := &eip.MessageRouterRequest{}
 	mr.New(0x01, paths, nil)
 
-	cpf := c.CommonPackage(mr)
-	res, err := c.Device.eipDevice.SendRRData(cpf, 10)
+	res, err := c.CommonPackage(mr)
 	if err != nil {
 		return err
 	}
