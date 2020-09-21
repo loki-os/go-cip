@@ -14,6 +14,7 @@ type Device struct {
 
 type Channel struct {
 	ucmm         bool
+	connID       []byte
 	slot         uint8
 	timeTicks    typedef.Usint
 	timeoutTicks typedef.Usint
@@ -53,6 +54,54 @@ func (d *Device) Ucmm(slot uint8) *Channel {
 	return _channel
 }
 
+func (d *Device) Forward(slot uint8) *Channel {
+	_channel := &Channel{
+		ucmm:         false,
+		slot:         slot,
+		Device:       d,
+		timeTicks:    3,
+		timeoutTicks: 250,
+	}
+
+	paths := Paths(
+		LogicalBuild(LogicalTypeClassID, 02, true),
+		LogicalBuild(LogicalTypeInstanceID, 01, true),
+	)
+
+	mr := &eip.MessageRouterRequest{}
+	mr.New(0x01, paths, nil)
+
+	ucs := UnConnectedSend{
+		TimeTick:       3,
+		TimeOutTicks:   250,
+		MessageRequest: mr,
+		RouterPath:     PortBuild([]byte{1}, 1, true),
+	}
+
+	mr2 := &eip.MessageRouterRequest{}
+	mr2.New(0x54, Paths(
+		LogicalBuild(LogicalTypeClassID, 06, true),
+		LogicalBuild(LogicalTypeInstanceID, 01, true),
+	), ucs.Encode())
+
+	cpf := &eip.CommonPacketFormat{}
+	cpf.New([]eip.CommonPacketFormatItem{
+		eip.CommonPacketFormatItem{
+			TypeID: eip.ItemIDUCMM,
+			Data:   nil,
+		},
+		eip.CommonPacketFormatItem{
+			TypeID: eip.ItemIDUnconnectedMessage,
+			Data:   mr2.Encode(),
+		},
+	})
+
+	r, _ := d.eipDevice.SendRRData(cpf, 10)
+	_channel.connID = r.Packet.Items[1].Data
+
+	return _channel
+}
+
 func (c *Channel) SetTimeout(timeTicks typedef.Usint, timeoutTicks typedef.Usint) {
 	c.timeTicks = timeTicks
 	c.timeoutTicks = timeoutTicks
@@ -87,9 +136,19 @@ func (c *Channel) CommonPackage(mr *eip.MessageRouterRequest) (*eip.SendDataSpec
 
 		return c.Device.eipDevice.SendRRData(cpf, 10)
 	} else {
-		//todo
+		cpf2 := &eip.CommonPacketFormat{}
+		cpf2.New([]eip.CommonPacketFormatItem{
+			eip.CommonPacketFormatItem{
+				TypeID: eip.ItemIDConnectionBased,
+				Data:   c.connID,
+			},
+			eip.CommonPacketFormatItem{
+				TypeID: eip.ItemIDUnconnectedMessage,
+				Data:   mr.Encode(),
+			},
+		})
 
-		return nil, nil
+		return c.Device.eipDevice.SendUnitData(cpf2, 10)
 	}
 }
 
