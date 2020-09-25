@@ -8,26 +8,26 @@ import (
 	"github.com/loki-os/go-ethernet-ip/typedef"
 )
 
-type Device struct {
-	eipDevice *eip.Device
-}
-
-type Channel struct {
-	ucmm         bool
-	connID       []byte
-	slot         uint8
+type Controller struct {
+	device       *eip.Device
 	timeTicks    typedef.Usint
 	timeoutTicks typedef.Usint
-	Device       *Device
-	SlotDevice   *eip.Device
+
+	slot       uint8
+	controller *eip.Device
 }
 
-func NewDeviceFromClient(device *eip.Device) *Device {
-	_client := &Device{eipDevice: device}
+func NewControllerFromClient(device *eip.Device, slot uint8) *Controller {
+	_client := &Controller{
+		device:       device,
+		slot:         slot,
+		timeTicks:    3,
+		timeoutTicks: 250,
+	}
 	return _client
 }
 
-func NewDeviceFromIP(addr string, config *eip.Config) (*Device, error) {
+func NewControllerFromIP(addr string, slot uint8, config *eip.Config) (*Controller, error) {
 	device, err := eip.NewDevice(addr)
 	if err != nil {
 		return nil, err
@@ -38,48 +38,30 @@ func NewDeviceFromIP(addr string, config *eip.Config) (*Device, error) {
 		return nil, err2
 	}
 
-	_device := &Device{eipDevice: device}
+	_device := &Controller{
+		device:       device,
+		slot:         slot,
+		timeTicks:    3,
+		timeoutTicks: 250,
+	}
 	return _device, nil
 }
 
-func (d *Device) Ucmm(slot uint8) *Channel {
-	_channel := &Channel{
-		ucmm:         true,
-		slot:         slot,
-		Device:       d,
-		timeTicks:    3,
-		timeoutTicks: 250,
-	}
-
-	return _channel
+func (c *Controller) SetTimeout(timeTicks typedef.Usint, timeoutTicks typedef.Usint) {
+	c.timeTicks = timeTicks
+	c.timeoutTicks = timeoutTicks
 }
 
-func (d *Device) Forward(slot uint8) *Channel {
-	_channel := &Channel{
-		ucmm:         false,
-		slot:         slot,
-		Device:       d,
-		timeTicks:    3,
-		timeoutTicks: 250,
-	}
-
-	paths := Paths(
-		LogicalBuild(LogicalTypeClassID, 02, true),
-		LogicalBuild(LogicalTypeInstanceID, 01, true),
-	)
-
-	mr := &eip.MessageRouterRequest{}
-	mr.New(0x01, paths, nil)
-
+func (c *Controller) UCMM(mrr *eip.MessageRouterRequest) (*eip.SendDataSpecificData, error) {
 	ucs := UnConnectedSend{
-		TimeTick:       3,
-		TimeOutTicks:   250,
-		MessageRequest: mr,
-		RouterPath:     PortBuild([]byte{1}, 1, true),
+		TimeTick:       c.timeTicks,
+		TimeOutTicks:   c.timeoutTicks,
+		MessageRequest: mrr,
+		RouterPath:     PortBuild([]byte{c.slot}, 1, true),
 	}
 
-	mr2 := &eip.MessageRouterRequest{}
-	mr2.New(0x54, Paths(
+	_mrr := &eip.MessageRouterRequest{}
+	_mrr.New(0x52, Paths(
 		LogicalBuild(LogicalTypeClassID, 06, true),
 		LogicalBuild(LogicalTypeInstanceID, 01, true),
 	), ucs.Encode())
@@ -92,76 +74,23 @@ func (d *Device) Forward(slot uint8) *Channel {
 		},
 		eip.CommonPacketFormatItem{
 			TypeID: eip.ItemIDUnconnectedMessage,
-			Data:   mr2.Encode(),
+			Data:   _mrr.Encode(),
 		},
 	})
 
-	r, _ := d.eipDevice.SendRRData(cpf, 10)
-	_channel.connID = r.Packet.Items[1].Data
-
-	return _channel
+	return c.device.SendRRData(cpf, 10)
 }
 
-func (c *Channel) SetTimeout(timeTicks typedef.Usint, timeoutTicks typedef.Usint) {
-	c.timeTicks = timeTicks
-	c.timeoutTicks = timeoutTicks
-}
-
-func (c *Channel) CommonPackage(mr *eip.MessageRouterRequest) (*eip.SendDataSpecificData, error) {
-	if c.ucmm {
-		ucs := UnConnectedSend{
-			TimeTick:       c.timeTicks,
-			TimeOutTicks:   c.timeoutTicks,
-			MessageRequest: mr,
-			RouterPath:     PortBuild([]byte{c.slot}, 1, true),
-		}
-
-		mr2 := &eip.MessageRouterRequest{}
-		mr2.New(0x52, Paths(
-			LogicalBuild(LogicalTypeClassID, 06, true),
-			LogicalBuild(LogicalTypeInstanceID, 01, true),
-		), ucs.Encode())
-
-		cpf := &eip.CommonPacketFormat{}
-		cpf.New([]eip.CommonPacketFormatItem{
-			eip.CommonPacketFormatItem{
-				TypeID: eip.ItemIDUCMM,
-				Data:   nil,
-			},
-			eip.CommonPacketFormatItem{
-				TypeID: eip.ItemIDUnconnectedMessage,
-				Data:   mr2.Encode(),
-			},
-		})
-
-		return c.Device.eipDevice.SendRRData(cpf, 10)
-	} else {
-		cpf2 := &eip.CommonPacketFormat{}
-		cpf2.New([]eip.CommonPacketFormatItem{
-			eip.CommonPacketFormatItem{
-				TypeID: eip.ItemIDConnectionBased,
-				Data:   c.connID,
-			},
-			eip.CommonPacketFormatItem{
-				TypeID: eip.ItemIDUnconnectedMessage,
-				Data:   mr.Encode(),
-			},
-		})
-
-		return c.Device.eipDevice.SendUnitData(cpf2, 10)
-	}
-}
-
-func (c *Channel) GetAttributeAll() error {
+func (c *Controller) GetAttributeAll() error {
 	paths := Paths(
 		LogicalBuild(LogicalTypeClassID, 01, true),
 		LogicalBuild(LogicalTypeInstanceID, 01, true),
 	)
 
-	mr := &eip.MessageRouterRequest{}
-	mr.New(0x01, paths, nil)
+	mrreq := &eip.MessageRouterRequest{}
+	mrreq.New(0x01, paths, nil)
 
-	res, err := c.CommonPackage(mr)
+	res, err := c.UCMM(mrreq)
 	if err != nil {
 		return err
 	}
@@ -175,19 +104,19 @@ func (c *Channel) GetAttributeAll() error {
 
 	dataReader := bytes.NewReader(mrres.ResponseData)
 
-	c.SlotDevice = &eip.Device{}
-	eip.ReadByte(dataReader, &c.SlotDevice.VendorID)
-	eip.ReadByte(dataReader, &c.SlotDevice.DeviceType)
-	eip.ReadByte(dataReader, &c.SlotDevice.ProductCode)
-	eip.ReadByte(dataReader, &c.SlotDevice.Major)
-	eip.ReadByte(dataReader, &c.SlotDevice.Minor)
-	eip.ReadByte(dataReader, &c.SlotDevice.Status)
-	eip.ReadByte(dataReader, &c.SlotDevice.SerialNumber)
+	c.controller = &eip.Device{}
+	eip.ReadByte(dataReader, &c.controller.VendorID)
+	eip.ReadByte(dataReader, &c.controller.DeviceType)
+	eip.ReadByte(dataReader, &c.controller.ProductCode)
+	eip.ReadByte(dataReader, &c.controller.Major)
+	eip.ReadByte(dataReader, &c.controller.Minor)
+	eip.ReadByte(dataReader, &c.controller.Status)
+	eip.ReadByte(dataReader, &c.controller.SerialNumber)
 	nameLength := uint8(0)
 	eip.ReadByte(dataReader, &nameLength)
 	productName := make([]byte, nameLength)
 	eip.ReadByte(dataReader, &productName)
-	c.SlotDevice.ProductName = string(productName)
+	c.controller.ProductName = string(productName)
 
 	return nil
 }
