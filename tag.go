@@ -132,7 +132,7 @@ func (t *Tag) Write() error {
 	eip.WriteByte(data, t.Type)
 	eip.WriteByte(data, t.readCount)
 	eip.WriteByte(data, t.value)
-	mr.New(ServiceReadTag, Paths(
+	mr.New(ServiceWriteTag, Paths(
 		LogicalBuild(LogicalTypeClassID, 0x6B, true),
 		LogicalBuild(LogicalTypeInstanceID, t.InstanceID, true),
 	), data.Bytes())
@@ -279,7 +279,7 @@ func (t *Tag) Value() interface{} {
 			if xtp == 0xFCE {
 				val := make([]string, t.dim1Len)
 
-				for i, _ := range val {
+				for i := range val {
 					_len := uint32(0)
 					eip.ReadByte(reader, &_len)
 					_val := make([]byte, 84)
